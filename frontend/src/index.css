@@ -1,0 +1,131 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 9% 23%;
+    --foreground: 240 17% 94%;
+
+    --card: 232 10% 30%;
+    --card-foreground: 240 17% 94%;
+
+    --popover: 210 4% 13%;
+    --popover-foreground: 240 17% 94%;
+
+    --primary: 154 79% 43%;
+    --primary-foreground: 240 17% 94%;
+
+    --secondary: 267 100% 70%;
+    --secondary-foreground: 240 17% 94%;
+
+    --muted: 232 10% 30%;
+    --muted-foreground: 240 10% 70%;
+
+    --accent: 236 10% 28%;
+    --accent-foreground: 240 17% 94%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 240 17% 94%;
+
+    --border: 232 10% 37%;
+    --input: 236 10% 28%;
+    --ring: 154 79% 43%;
+
+    --radius: 0.75rem;
+
+    --sidebar: 210 4% 13%;
+    --sidebar-foreground: 240 17% 94%;
+    --sidebar-border: 232 10% 25%;
+
+    --message-user: 240 9% 23%;
+    --message-assistant: 232 10% 30%;
+
+    --avatar-user: 154 79% 43%;
+    --avatar-assistant: 267 100% 70%;
+  }
+
+  .dark {
+    --background: 240 9% 23%;
+    --foreground: 240 17% 94%;
+    --card: 232 10% 30%;
+    --card-foreground: 240 17% 94%;
+    --popover: 210 4% 13%;
+    --popover-foreground: 240 17% 94%;
+    --primary: 154 79% 43%;
+    --primary-foreground: 240 17% 94%;
+    --secondary: 267 100% 70%;
+    --secondary-foreground: 240 17% 94%;
+    --muted: 232 10% 30%;
+    --muted-foreground: 240 10% 70%;
+    --accent: 236 10% 28%;
+    --accent-foreground: 240 17% 94%;
+    --destructive: 0 62% 30%;
+    --destructive-foreground: 240 17% 94%;
+    --border: 232 10% 37%;
+    --input: 236 10% 28%;
+    --ring: 154 79% 43%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+    border-radius: 3px;
+  }
+}
+
+@layer components {
+  .typing-dot {
+    animation: typing-bounce 1.4s infinite ease-in-out both;
+  }
+
+  .typing-dot:nth-child(1) {
+    animation-delay: -0.32s;
+  }
+
+  .typing-dot:nth-child(2) {
+    animation-delay: -0.16s;
+  }
+
+  .typing-dot:nth-child(3) {
+    animation-delay: 0s;
+  }
+}
+
+@keyframes typing-bounce {
+  0%, 80%, 100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}

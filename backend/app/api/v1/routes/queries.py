@@ -1,0 +1,175 @@
+"""Query Endpoints."""
+
+import time
+import uuid
+from typing import List, Optional
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from app.core.exceptions import SearchError
+from app.core.logging import get_logger
+from app.graph.router_graph import build_router_graph
+from app.graph.router_state import RouterState
+from app.optimization.caching import cache_manager
+from app.optimization.cost_tracker import cost_tracker
+from app.search.hybrid_search import HybridSearchEngine
+from app.search.reranker import RerankerAgent
+from app.utils.metrics import QueryMetrics, system_metrics
+from app.api.v1.routes import documents
+
+logger = get_logger(__name__)
+router = APIRouter()
+
+# Global search engine, reranker, and router graph (initialized on first query)
+search_engine: Optional[HybridSearchEngine] = None
+reranker: Optional[RerankerAgent] = None
+router_graph = None
+_last_document_count: int = 0
+
+
+def _initialize_system():
+    """Initialize search engine and router graph - reinitializes if documents changed."""
+    global search_engine, reranker, router_graph, _last_document_count
+
+    docs = documents.get_all_documents()
+    current_doc_count = len(docs)
+    
+    # Initialize or reinitialize if document count changed
+    if search_engine is None or current_doc_count != _last_document_count:
+        if current_doc_count > 0:
+            logger.info(
+                "initializing_search_engine",
+                document_count=current_doc_count,
+                previous_count=_last_document_count,
+            )
+            search_engine = HybridSearchEngine(docs)
+            reranker = RerankerAgent()
+            
+            # Clear cache when documents change
+            if _last_document_count > 0 and current_doc_count != _last_document_count:
+                cache_manager.clear()
+                logger.info("cache_cleared_due_to_document_change")
+        else:
+            # No documents, but still initialize router (will route to general)
+            search_engine = None
+            reranker = None
+            logger.info("no_documents_available_routing_to_general")
+        
+        # Build router graph (works with or without documents)
+        router_graph = build_router_graph(search_engine, reranker)
+        _last_document_count = current_doc_count
+    elif router_graph is None:
+        # Router not initialized yet
+        router_graph = build_router_graph(search_engine, reranker)
+
+
+class QueryRequest(BaseModel):
+    """Query request model."""
+
+    query: str
+
+
+class QueryResponse(BaseModel):
+    """Query response model."""
+
+    query_id: str
+    query: str
+    answer: str
+    quality_score: float
+    reasoning: str
+    sources: List[dict]  # Now includes: doc_id, chunk_idx, filename, score, content
+    latency: float
+    cost: float
+    error: Optional[str] = None
+
+
+@router.post("", response_model=QueryResponse)
+async def submit_query(request: QueryRequest):
+    """Submit query to RAG system."""
+    query_id = str(uuid.uuid4())
+    start_time = time.time()
+
+    try:
+        # Initialize system if needed
+        _initialize_system()
+
+        # Check cache
+        cached_result = cache_manager.get(query=request.query)
+        if cached_result:
+            logger.info("cache_hit", query_id=query_id)
+            return QueryResponse(**cached_result)
+
+        # Create initial router state
+        initial_state: RouterState = {
+            "query": request.query,
+            "classification": {
+                "route": "general",
+                "confidence": 0.0,
+                "reasoning": "",
+            },
+            "answer": "",
+            "quality_score": 0.0,
+            "reasoning": "",
+            "sources": [],
+            "latency": 0.0,
+            "cost": 0.0,
+            "error": None,
+            "metadata": {},
+        }
+
+        # Execute router graph
+        result = router_graph.invoke(initial_state)
+
+        # Calculate metrics
+        latency = time.time() - start_time
+        cost = cost_tracker.get_cost_per_query()
+
+        # Track metrics
+        query_metrics = QueryMetrics(
+            query=request.query,
+            latency=latency,
+            quality_score=result.get("quality_score", 0.0),
+            cost=cost,
+        )
+        system_metrics.add_query(query_metrics)
+
+        # Prepare response
+        response = QueryResponse(
+            query_id=query_id,
+            query=request.query,
+            answer=result.get("answer", ""),
+            quality_score=result.get("quality_score", 0.0),
+            reasoning=result.get("reasoning", ""),
+            sources=result.get("sources", []),
+            latency=latency,
+            cost=cost,
+            error=result.get("error"),
+        )
+
+        # Cache result
+        cache_manager.set(query=request.query, value=response.dict())
+
+        logger.info(
+            "query_processed",
+            query_id=query_id,
+            route=result.get("classification", {}).get("route", "unknown"),
+            latency=latency,
+            quality_score=result.get("quality_score", 0.0),
+        )
+
+        return response
+
+    except Exception as e:
+        logger.error("query_processing_failed", query_id=query_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{query_id}")
+async def get_query_result(query_id: str):
+    """Get query result by ID."""
+    # In production, store query results in database
+    raise HTTPException(
+        status_code=501, detail="Query result retrieval not yet implemented"
+    )
+

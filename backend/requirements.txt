@@ -1,0 +1,45 @@
+# Core LangChain & LangGraph (Latest 2025)
+langgraph>=1.0.5
+langchain>=1.2.0
+langchain-openai>=1.1.3
+langchain-community>=0.4.1
+langchain-chroma>=0.1.2
+langsmith>=0.1.0
+
+# OpenAI SDK (Latest)
+openai>=1.54.0
+
+# Azure Document Intelligence (Latest)
+azure-ai-documentintelligence>=1.0.0
+azure-core>=1.30.0
+
+# Vector DB
+chromadb>=0.5.0
+rank-bm25>=0.2.2
+
+# Reranking
+cohere>=5.0.0
+
+# Document Processing
+pypdf>=6.4.2
+langchain-text-splitters>=0.3.0
+
+# API & Server
+fastapi[all]>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic[email]>=2.9.0
+pydantic-settings>=2.5.0
+
+# Production Utilities
+python-dotenv>=1.0.1
+python-multipart>=0.0.12
+httpx>=0.27.0
+structlog>=24.4.0
+tenacity>=9.0.0
+redis>=5.2.0
+prometheus-client>=0.20.0
+
+# Type Checking & Quality
+typing-extensions>=4.12.0
+numpy>=1.26.0
+
