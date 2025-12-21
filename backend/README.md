@@ -11,7 +11,7 @@ Production-ready FastAPI backend for RAG System with Hybrid Search, Reranking, a
 - **Reranking** - Cohere API or local CrossEncoder
 - **Azure Document Intelligence** - OCR for scanned documents
 - **OpenAI Embeddings** - text-embedding-3-small
-- **Qdrant** - Vector database
+- **ChromaDB** - Vector database (embedded, no separate service needed)
 - **Redis** - Caching support
 - **Async/Await** - Full async support
 - **Docker** - Containerized deployment
@@ -38,7 +38,7 @@ app/
 ### Prerequisites
 
 - Python 3.11+
-- Qdrant (via Docker or local installation)
+- ChromaDB (embedded, automatically initialized - no separate service needed)
 - Redis (optional, for caching)
 - OpenAI API key
 - Azure API key (for OCR)
@@ -67,12 +67,7 @@ cp .env.example .env
 # Edit .env with your configuration
 ```
 
-5. Start Qdrant (if not using Docker):
-```bash
-docker run -p 6333:6333 qdrant/qdrant
-```
-
-6. Run the development server:
+5. Run the development server:
 ```bash
 make run
 # Or
@@ -181,14 +176,13 @@ Key variables:
 - `COHERE_API_KEY` - Cohere API key (optional, for reranking)
 - `LANGCHAIN_TRACING_V2` - Enable LangSmith tracing
 - `LANGCHAIN_API_KEY` - LangSmith API key (optional)
-- `QDRANT_URL` - Qdrant URL (default: localhost)
 - `REDIS_URL` - Redis URL (optional, for caching)
 
 ## Production Deployment
 
 1. Set `ENVIRONMENT=production` in `.env`
 2. Configure proper `SECRET_KEY`
-3. Set up Qdrant and Redis
+3. Set up Redis (optional, for caching)
 4. Configure CORS origins
 5. Build Docker image:
 ```bash
@@ -204,9 +198,10 @@ docker build -t rag-system-backend .
 - Verify OCR model name
 
 ### Search Issues
-- Verify Qdrant is running and accessible
+- Check ChromaDB persistence directory (.chroma) is writable
 - Check embedding model configuration
 - Ensure documents are loaded
+- Verify OpenAI API key is set correctly
 
 ### API Errors
 - Check API keys are set correctly
