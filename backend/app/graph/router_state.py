@@ -6,7 +6,7 @@ from typing_extensions import TypedDict
 
 class Classification(TypedDict):
     """Query classification result."""
-    route: Literal["general", "rag"]
+    route: Literal["general", "rag", "web_search"]
     confidence: float
     reasoning: str
 

@@ -254,8 +254,26 @@ class HybridSearchEngine:
             reverse=True,
         )
 
-        # Add fusion_score to each result
-        return [
-            {**result, "score": fusion_score, "fusion_score": fusion_score}
-            for fusion_score, result in sorted_results[:k]
-        ]
+        # Normalize fusion scores to 0-1 range for better readability
+        # This makes scores more interpretable (0.0 = worst, 1.0 = best)
+        results = []
+        if sorted_results:
+            max_fusion_score = sorted_results[0][0]  # Highest score (first after sorting)
+            if max_fusion_score > 0:
+                for original_fusion_score, result in sorted_results[:k]:
+                    normalized_score = original_fusion_score / max_fusion_score
+                    results.append({
+                        **result,
+                        "score": normalized_score,
+                        "fusion_score": original_fusion_score,  # Keep original for debugging
+                    })
+            else:
+                # All scores are 0, use original scores
+                for original_fusion_score, result in sorted_results[:k]:
+                    results.append({
+                        **result,
+                        "score": original_fusion_score,
+                        "fusion_score": original_fusion_score,
+                    })
+        
+        return results

@@ -57,10 +57,13 @@ def build_rag_graph(
             logger.error("reranking_failed", error=str(e), exc_info=True)
             state["error"] = f"Reranking failed: {str(e)}"
             # Preserve scores from hybrid search when reranking fails
-            state["reranked_results"] = [
-                {**doc, "score": doc.get("score") or doc.get("fusion_score") or 0.0}
-                for doc in state["hybrid_results"][: settings.TOP_K_RERANK]
-            ]
+            # Use None checks instead of 'or' to handle 0.0 values correctly
+            state["reranked_results"] = []
+            for doc in state["hybrid_results"][: settings.TOP_K_RERANK]:
+                fusion_score = doc.get("fusion_score")
+                original_score = doc.get("score")
+                score = fusion_score if fusion_score is not None else (original_score if original_score is not None else 0.0)
+                state["reranked_results"].append({**doc, "score": score})
         return state
 
     # Build graph

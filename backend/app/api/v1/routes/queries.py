@@ -94,11 +94,23 @@ async def submit_query(request: QueryRequest):
         # Initialize system if needed
         _initialize_system()
 
-        # Check cache
-        cached_result = cache_manager.get(query=request.query)
-        if cached_result:
-            logger.info("cache_hit", query_id=query_id)
-            return QueryResponse(**cached_result)
+        # Quick check for real-time keywords to skip cache for web_search queries
+        query_lower = request.query.lower()
+        real_time_indicators = [
+            "current", "latest", "recent", "today", "now", "this week",
+            "price of", "price is", "what's the price",
+            "news", "what happened", "what's happening", "breaking",
+            "weather", "forecast", "stock price", "crypto price"
+        ]
+        is_likely_realtime = any(indicator in query_lower for indicator in real_time_indicators)
+        
+        # Only check cache if it's not likely a real-time query
+        # (web_search queries shouldn't be cached as they're real-time)
+        if not is_likely_realtime:
+            cached_result = cache_manager.get(query=request.query)
+            if cached_result:
+                logger.info("cache_hit", query_id=query_id)
+                return QueryResponse(**cached_result)
 
         # Create initial router state
         initial_state: RouterState = {
@@ -120,6 +132,9 @@ async def submit_query(request: QueryRequest):
 
         # Execute router graph
         result = router_graph.invoke(initial_state)
+        
+        # Get the route from classification
+        route = result.get("classification", {}).get("route", "general")
 
         # Calculate metrics
         latency = time.time() - start_time
@@ -147,8 +162,11 @@ async def submit_query(request: QueryRequest):
             error=result.get("error"),
         )
 
-        # Cache result
-        cache_manager.set(query=request.query, value=response.dict())
+        # Only cache non-web_search queries (web_search results are real-time and shouldn't be cached)
+        if route != "web_search":
+            cache_manager.set(query=request.query, value=response.dict())
+        else:
+            logger.debug("skipping_cache_for_web_search", query=request.query[:50])
 
         logger.info(
             "query_processed",

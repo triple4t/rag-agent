@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     # Optional API Keys
     COHERE_API_KEY: Optional[str] = None
     LANGCHAIN_API_KEY: Optional[str] = None
+    TAVILY_API_KEY: Optional[str] = None  # For web search
 
     # LangSmith Configuration
     LANGCHAIN_TRACING_V2: bool = False
@@ -82,6 +83,11 @@ class Settings(BaseSettings):
     CACHE_ENABLED: bool = True
     REDIS_URL: Optional[str] = None
     CACHE_TTL: int = 3600  # 1 hour
+
+    # Web Search Configuration
+    WEB_SEARCH_ENABLED: bool = True
+    WEB_SEARCH_NUM_RESULTS: int = 5
+    WEB_SEARCH_DEPTH: str = "basic"  # "basic" or "advanced"
 
     # Success Metrics Targets (from roadmap lines 96-100)
     TARGET_MRR: float = 0.7
