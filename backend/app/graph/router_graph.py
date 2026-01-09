@@ -410,9 +410,10 @@ Classify the current question considering the conversation context."""
             # If max score is below threshold, use adaptive threshold
             # Keep top results even if absolute scores are low (common with Cohere reranker)
             if max_score < settings.MIN_RELEVANCE_SCORE and max_score > 0:
-                # Use adaptive threshold: 50% of max score, but at least 0.005
-                # This ensures we keep the most relevant results even with low absolute scores
-                adaptive_threshold = max(max_score * 0.5, 0.005)
+                # Use adaptive threshold: 10% of max score, but at least 0.0001
+                # This ensures we keep the most relevant results even with very low absolute scores
+                # Using 10% ensures we keep top results while still filtering out very low relevance
+                adaptive_threshold = max(max_score * 0.1, 0.0001)
                 logger.info(
                     "using_adaptive_threshold",
                     max_score=max_score,
@@ -460,7 +461,8 @@ Classify the current question considering the conversation context."""
                     "content": content_preview,
                 })
             
-            # If no sources passed the relevance threshold, provide helpful message
+            # If no sources passed the relevance threshold but answer was generated, still return it
+            # The answer generator may have used context even if individual sources scored low
             if not sources and result.get("reranked_results"):
                 max_score = max(
                     (
@@ -469,16 +471,36 @@ Classify the current question considering the conversation context."""
                     ),
                     default=0.0,
                 )
+                
+                # If an answer was generated, return it even without sources
+                # The answer generator had access to the context
+                if result.get("final_answer"):
+                    logger.warning(
+                        "no_sources_passed_threshold_but_answer_generated",
+                        query=state["query"][:50],
+                        max_score=max_score,
+                        threshold=effective_threshold if 'effective_threshold' in locals() else settings.MIN_RELEVANCE_SCORE,
+                    )
+                    # Return the generated answer with empty sources
+                    return {
+                        "answer": result.get("final_answer", ""),
+                        "quality_score": result.get("quality_score", 0.0),
+                        "reasoning": result.get("reasoning", ""),
+                        "sources": [],
+                        "error": None,
+                    }
+                
+                # Only show error if no answer was generated
                 logger.warning(
                     "no_sources_passed_threshold",
                     query=state["query"][:50],
                     max_score=max_score,
-                    threshold=settings.MIN_RELEVANCE_SCORE,
+                    threshold=effective_threshold if 'effective_threshold' in locals() else settings.MIN_RELEVANCE_SCORE,
                 )
                 return {
                     "answer": f"I couldn't find relevant information in the uploaded documents to answer your question. The documents appear to be about a course syllabus, but your question asks about '{state['query']}'. Please try asking about topics covered in the course syllabus, or upload documents that contain information about your question.",
                     "quality_score": 0.0,
-                    "reasoning": f"No sources met the minimum relevance threshold of {settings.MIN_RELEVANCE_SCORE}. Highest score was {max_score:.4f}.",
+                    "reasoning": f"No sources met the minimum relevance threshold of {effective_threshold if 'effective_threshold' in locals() else settings.MIN_RELEVANCE_SCORE}. Highest score was {max_score:.4f}.",
                     "sources": [],
                     "error": None,
                 }

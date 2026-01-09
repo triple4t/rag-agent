@@ -105,7 +105,7 @@ def extract_text_with_azure_ocr(pdf_path: str) -> Tuple[str, bool]:
         # Analyze document with Mistral model
         poller = client.begin_analyze_document(
             model_id=settings.AZURE_MISTRAL_MODEL,
-            analyze_request=pdf_data,
+            body=pdf_data,
             content_type="application/pdf",
         )
 
