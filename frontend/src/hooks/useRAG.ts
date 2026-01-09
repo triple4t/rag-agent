@@ -84,28 +84,55 @@ export const useRAG = () => {
   /**
    * Send a query to the RAG system
    */
-  const sendQuery = useCallback(async (query: string) => {
-    if (!query.trim()) return;
+  const sendQuery = useCallback(async (query: string, images?: string[]) => {
+    const trimmedQuery = query.trim();
+    const hasQuery = trimmedQuery.length > 0;
+    const hasImages = images && images.length > 0;
+    
+    console.log('sendQuery called:', { query: trimmedQuery, hasQuery, hasImages, imagesCount: images?.length || 0 });
+    
+    if (!hasQuery && !hasImages) {
+      console.warn('Cannot send query: no query text and no images');
+      return;
+    }
 
     // Add user message immediately
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: 'user',
-      content: query.trim(),
+      content: trimmedQuery || (hasImages ? 'Image query' : ''),
+      images: images,
       timestamp: new Date(),
     };
 
+    console.log('Adding user message:', { content: userMessage.content, imagesCount: userMessage.images?.length || 0 });
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
 
     try {
-      const response: QueryResponse = await queriesApi.submit(query.trim());
+      // Build conversation history from previous messages (last 10 messages for context)
+      const conversationHistory = messages
+        .slice(-10) // Last 10 messages
+        .map((msg) => ({
+          role: msg.role,
+          content: msg.content,
+        }));
+      
+      const finalQuery = trimmedQuery || (hasImages ? 'Analyze the images' : '');
+      console.log('Submitting query to API:', { query: finalQuery, imagesCount: images?.length || 0 });
+      
+      const response: QueryResponse = await queriesApi.submit(
+        finalQuery,
+        conversationHistory,
+        images
+      );
 
       // Transform backend sources to frontend format
       const sources: Source[] = response.sources.map((source) => ({
         doc_id: source.doc_id,
         filename: source.filename,
         chunk_idx: source.chunk_idx,
+        page_number: source.page_number,
         content: source.content,
         score: source.score,
       }));

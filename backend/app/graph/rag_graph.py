@@ -1,10 +1,12 @@
-"""Production LangGraph RAG System Workflow."""
+"""Production LangGraph RAG System Workflow with Query Expansion and Context Compression."""
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.answer_generator import answer_generation_node
+from app.agents.context_compressor import context_compression_node
 from app.agents.quality_reflector import quality_reflection_node
+from app.agents.query_expander import query_expansion_node
 from app.config import get_settings
 from app.core.logging import get_logger
 from app.graph.state import RAGState
@@ -20,10 +22,31 @@ def build_rag_graph(
     reranker: RerankerAgent,
     enable_checkpointing: bool = False,
 ):
-    """Build production LangGraph RAG system."""
+    """Build production LangGraph RAG system with query expansion and context compression."""
+
+    def initialize_state(state: RAGState) -> RAGState:
+        """Initialize state with default values for new fields."""
+        if "expanded_queries" not in state:
+            state["expanded_queries"] = []
+        if "compressed_context" not in state:
+            state["compressed_context"] = []
+        if "conversation_history" not in state:
+            state["conversation_history"] = []
+        if "images" not in state:
+            state["images"] = []
+        return state
+
+    def query_expansion_wrapper(state: RAGState) -> RAGState:
+        """Wrapper for query expansion node with search engine."""
+        return query_expansion_node(state, search_engine)
 
     def hybrid_search_node(state: RAGState) -> RAGState:
-        """Hybrid search node with error handling."""
+        """Hybrid search node with error handling (fallback if expansion disabled)."""
+        # If query expansion already ran, skip this
+        if state.get("hybrid_results") and len(state.get("hybrid_results", [])) > 0:
+            logger.debug("skipping_hybrid_search_expansion_already_ran")
+            return state
+
         try:
             results = search_engine.hybrid_search(
                 state["query"], k=settings.TOP_K_SEARCH
@@ -70,15 +93,41 @@ def build_rag_graph(
     graph = StateGraph(RAGState)
 
     # Add nodes
-    graph.add_node("search", hybrid_search_node)
+    graph.add_node("initialize", initialize_state)
+    
+    # Query expansion or direct search
+    if settings.QUERY_EXPANSION_ENABLED:
+        graph.add_node("expand", query_expansion_wrapper)
+    else:
+        graph.add_node("search", hybrid_search_node)
+    
     graph.add_node("rerank", rerank_node)
+    
+    # Context compression
+    if settings.CONTEXT_COMPRESSION_ENABLED:
+        graph.add_node("compress", context_compression_node)
+    
     graph.add_node("answer", answer_generation_node)
     graph.add_node("reflect", quality_reflection_node)
 
     # Add edges
-    graph.add_edge(START, "search")
-    graph.add_edge("search", "rerank")
-    graph.add_edge("rerank", "answer")
+    graph.add_edge(START, "initialize")
+    
+    # Route from initialize to expansion or search
+    if settings.QUERY_EXPANSION_ENABLED:
+        graph.add_edge("initialize", "expand")
+        graph.add_edge("expand", "rerank")
+    else:
+        graph.add_edge("initialize", "search")
+        graph.add_edge("search", "rerank")
+    
+    # Route from rerank to compression or answer
+    if settings.CONTEXT_COMPRESSION_ENABLED:
+        graph.add_edge("rerank", "compress")
+        graph.add_edge("compress", "answer")
+    else:
+        graph.add_edge("rerank", "answer")
+    
     graph.add_edge("answer", "reflect")
     graph.add_edge("reflect", END)
 

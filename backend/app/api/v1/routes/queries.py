@@ -7,6 +7,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.config import get_settings
 from app.core.exceptions import SearchError
 from app.core.logging import get_logger
 from app.graph.router_graph import build_router_graph
@@ -19,6 +20,7 @@ from app.utils.metrics import QueryMetrics, system_metrics
 from app.api.v1.routes import documents
 
 logger = get_logger(__name__)
+settings = get_settings()
 router = APIRouter()
 
 # Global search engine, reranker, and router graph (initialized on first query)
@@ -68,6 +70,9 @@ class QueryRequest(BaseModel):
     """Query request model."""
 
     query: str
+    chat_id: Optional[int] = None  # Optional chat ID for conversation context
+    conversation_history: Optional[List[dict]] = None  # Optional conversation history: [{"role": "user", "content": "..."}, ...]
+    images: Optional[List[str]] = None  # Optional list of base64-encoded images (data URLs or base64 strings)
 
 
 class QueryResponse(BaseModel):
@@ -107,14 +112,37 @@ async def submit_query(request: QueryRequest):
         # Only check cache if it's not likely a real-time query
         # (web_search queries shouldn't be cached as they're real-time)
         if not is_likely_realtime:
-            cached_result = cache_manager.get(query=request.query)
+            # Try semantic cache first, then exact match
+            cached_result = cache_manager.get_semantic(query=request.query)
+            is_semantic_hit = cached_result is not None
+            if not cached_result:
+                cached_result = cache_manager.get(query=request.query)
+            
             if cached_result:
-                logger.info("cache_hit", query_id=query_id)
+                logger.info("cache_hit", query_id=query_id, semantic=is_semantic_hit)
                 return QueryResponse(**cached_result)
 
+        # Load conversation history if chat_id is provided
+        conversation_history = request.conversation_history or []
+        if request.chat_id and not conversation_history:
+            # Try to load from database if chat_id provided but no history
+            try:
+                from app.database.session import get_db
+                from app.models.database import Chat, Message
+                from sqlalchemy import select, asc
+                from sqlalchemy.ext.asyncio import AsyncSession
+                
+                # Note: This is a sync function, so we can't use async DB directly
+                # For now, rely on conversation_history being passed from frontend
+                logger.debug("chat_id_provided_but_no_history", chat_id=request.chat_id)
+            except Exception as e:
+                logger.debug("could_not_load_chat_history", chat_id=request.chat_id, error=str(e))
+        
         # Create initial router state
         initial_state: RouterState = {
             "query": request.query,
+            "conversation_history": conversation_history,
+            "images": request.images or [],  # Include images in state
             "classification": {
                 "route": "general",
                 "confidence": 0.0,
@@ -164,7 +192,11 @@ async def submit_query(request: QueryRequest):
 
         # Only cache non-web_search queries (web_search results are real-time and shouldn't be cached)
         if route != "web_search":
-            cache_manager.set(query=request.query, value=response.dict())
+            cache_manager.set(
+                query=request.query,
+                value=response.dict(),
+                enable_semantic=settings.SEMANTIC_CACHE_ENABLED,
+            )
         else:
             logger.debug("skipping_cache_for_web_search", query=request.query[:50])
 

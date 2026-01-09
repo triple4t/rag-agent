@@ -25,7 +25,17 @@ const UploadArea = ({ onUpload, isUploading }: UploadAreaProps) => {
       setIsDragging(false);
 
       const files = Array.from(e.dataTransfer.files).filter(
-        (file) => file.type === 'application/pdf'
+        (file) => {
+          // Accept PDFs and images
+          const isPDF = file.type === 'application/pdf';
+          const isImage = file.type.startsWith('image/');
+          // Also check by extension for cases where file.type might be empty
+          const fileExtension = file.name.toLowerCase().split('.').pop() || '';
+          const imageExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
+          const isImageByExtension = imageExtensions.includes(fileExtension);
+          
+          return isPDF || isImage || isImageByExtension;
+        }
       );
 
       if (files.length > 0) {
@@ -59,23 +69,27 @@ const UploadArea = ({ onUpload, isUploading }: UploadAreaProps) => {
     >
       <input
         type="file"
-        accept=".pdf"
+        accept=".pdf,image/*,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg"
         multiple
         onChange={handleFileSelect}
         disabled={isUploading}
         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+        id="sidebar-file-upload"
       />
-      <div className="flex flex-col items-center gap-2">
+      <label
+        htmlFor="sidebar-file-upload"
+        className="flex flex-col items-center gap-2 cursor-pointer"
+      >
         {isUploading ? (
           <Loader2 className="w-8 h-8 text-primary animate-spin" />
         ) : (
           <Upload className="w-8 h-8 text-muted-foreground" />
         )}
         <p className="text-sm font-medium text-foreground">
-          {isUploading ? 'Uploading...' : 'Click or drag PDF files here'}
+          {isUploading ? 'Uploading...' : 'Click or drag files here'}
         </p>
-        <p className="text-xs text-muted-foreground">Supports PDF documents</p>
-      </div>
+        <p className="text-xs text-muted-foreground">Supports PDF documents and images</p>
+      </label>
     </div>
   );
 };

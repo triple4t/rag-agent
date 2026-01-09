@@ -9,7 +9,7 @@ import type { Message } from '@/types';
 
 interface ChatInterfaceProps {
   messages: Message[];
-  onSend: (message: string) => void;
+  onSend: (message: string, images?: string[]) => void;
   isLoading: boolean;
   hasDocuments: boolean;
   onMenuClick: () => void;

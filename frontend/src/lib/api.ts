@@ -83,13 +83,18 @@ async function fetchAPI<T>(
  */
 export const documentsApi = {
     /**
-     * Upload PDF documents
+     * Upload documents (PDFs and images)
      */
     async upload(files: File[]): Promise<Document[]> {
         const formData = new FormData();
         files.forEach((file) => {
-            if (!file.name.toLowerCase().endsWith('.pdf')) {
-                throw new APIError(`File ${file.name} is not a PDF file`, 400);
+            // Accept both PDFs and images
+            const fileName = file.name.toLowerCase();
+            const isPDF = fileName.endsWith('.pdf');
+            const isImage = fileName.match(/\.(png|jpg|jpeg|gif|webp|bmp|svg|heic|heif)$/);
+            
+            if (!isPDF && !isImage) {
+                throw new APIError(`File ${file.name} is not a supported file type. Please upload PDF or image files.`, 400);
             }
             formData.append('files', file);
         });
@@ -170,10 +175,21 @@ export const queriesApi = {
     /**
      * Submit a query to the RAG system
      */
-    async submit(query: string): Promise<QueryResponse> {
+    async submit(
+        query: string, 
+        conversationHistory?: Array<{role: string, content: string}>,
+        images?: string[]
+    ): Promise<QueryResponse> {
+        const payload: any = { query };
+        if (conversationHistory && conversationHistory.length > 0) {
+            payload.conversation_history = conversationHistory;
+        }
+        if (images && images.length > 0) {
+            payload.images = images;
+        }
         const data = await fetchAPI<QueryResponse>('/queries', {
             method: 'POST',
-            body: JSON.stringify({ query }),
+            body: JSON.stringify(payload),
         });
         return data;
     },

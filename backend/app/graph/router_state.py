@@ -14,6 +14,8 @@ class Classification(TypedDict):
 class RouterState(TypedDict):
     """Main router state that tracks query, classification, and results."""
     query: str
+    conversation_history: list[dict]  # List of previous messages: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
+    images: list[str]  # List of base64-encoded images (data URLs or base64 strings)
     classification: Classification
     answer: str
     quality_score: float

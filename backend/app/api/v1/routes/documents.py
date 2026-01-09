@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from app.core.exceptions import DocumentProcessingError, NotFoundError
 from app.core.logging import get_logger
 from app.optimization.caching import cache_manager
-from app.utils.document_loader import load_pdf_documents
+from app.utils.document_loader import load_documents
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -30,20 +30,29 @@ class DocumentResponse(BaseModel):
 
 @router.post("/upload", response_model=List[DocumentResponse])
 async def upload_documents(files: List[UploadFile] = File(...)):
-    """Upload and process PDF documents."""
+    """Upload and process PDF documents and images."""
     try:
+        import tempfile
+        import os
+        from pathlib import Path
+        
         # Save uploaded files temporarily
         file_paths = []
         for file in files:
-            if not file.filename.endswith(".pdf"):
+            # Check if file is PDF or image
+            filename_lower = file.filename.lower()
+            is_pdf = filename_lower.endswith(".pdf")
+            is_image = any(filename_lower.endswith(ext) for ext in [
+                ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic", ".heif"
+            ])
+            
+            if not is_pdf and not is_image:
                 raise HTTPException(
-                    status_code=400, detail=f"{file.filename} is not a PDF file"
+                    status_code=400, 
+                    detail=f"{file.filename} is not a supported file type. Please upload PDF or image files."
                 )
 
             # Save to temporary location
-            import tempfile
-            import os
-
             temp_dir = tempfile.gettempdir()
             file_path = os.path.join(temp_dir, file.filename)
 
@@ -53,8 +62,8 @@ async def upload_documents(files: List[UploadFile] = File(...)):
 
             file_paths.append(file_path)
 
-        # Load and process documents
-        documents = load_pdf_documents(file_paths)
+        # Load and process documents (both PDFs and images)
+        documents = load_documents(file_paths)
 
         if not documents:
             raise DocumentProcessingError("No documents were successfully processed")
@@ -124,12 +133,44 @@ async def get_document(document_id: str):
 @router.delete("/{document_id}")
 async def delete_document(document_id: str):
     """Remove document."""
+    # URL decode the document_id in case it's encoded
+    from urllib.parse import unquote
+    document_id = unquote(document_id)
+    
+    # Try to find the document - check exact match first
     if document_id not in documents_store:
-        raise NotFoundError(f"Document {document_id} not found")
+        # Try to find by filename match (case-insensitive)
+        found_id = None
+        for doc_id, doc in documents_store.items():
+            filename = doc.metadata.get("filename", "")
+            # Check if document_id matches filename (without extension) or full filename
+            if (document_id.lower() == doc_id.lower() or 
+                document_id.lower() == filename.lower() or
+                document_id.lower() == filename.rsplit('.', 1)[0].lower()):
+                found_id = doc_id
+                break
+        
+        if found_id:
+            document_id = found_id
+        else:
+            # Log available document IDs for debugging
+            available_ids = list(documents_store.keys())
+            logger.warning(
+                "document_not_found_for_deletion",
+                requested_id=document_id,
+                available_ids=available_ids,
+            )
+            raise NotFoundError(
+                f"Document '{document_id}' not found. Available documents: {', '.join(available_ids)}"
+            )
 
+    doc = documents_store[document_id]
     del documents_store[document_id]
-    logger.info("document_deleted", document_id=document_id)
-    return {"message": f"Document {document_id} deleted"}
+    
+    # Clear cache when document is deleted
+    cache_manager.clear()
+    logger.info("document_deleted", document_id=document_id, filename=doc.metadata.get("filename"))
+    return {"message": f"Document {document_id} deleted successfully"}
 
 
 def get_all_documents():

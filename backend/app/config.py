@@ -83,6 +83,19 @@ class Settings(BaseSettings):
     CACHE_ENABLED: bool = True
     REDIS_URL: Optional[str] = None
     CACHE_TTL: int = 3600  # 1 hour
+    SEMANTIC_CACHE_ENABLED: bool = True
+    SEMANTIC_CACHE_THRESHOLD: float = 0.85  # Similarity threshold for semantic cache hits
+
+    # Query Expansion Configuration
+    QUERY_EXPANSION_ENABLED: bool = True
+    QUERY_EXPANSION_NUM_VARIATIONS: int = 3  # Number of query variations to generate
+
+    # Context Compression Configuration
+    CONTEXT_COMPRESSION_ENABLED: bool = True
+    CONTEXT_COMPRESSION_TOP_K: int = 3  # Keep top K chunks as-is, compress the rest
+
+    # Relevance Filtering Configuration
+    MIN_RELEVANCE_SCORE: float = 0.1  # Minimum score threshold for including results (0.0-1.0)
 
     # Web Search Configuration
     WEB_SEARCH_ENABLED: bool = True

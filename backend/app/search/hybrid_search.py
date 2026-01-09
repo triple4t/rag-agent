@@ -73,9 +73,23 @@ class HybridSearchEngine:
         doc_ids = []
 
         for doc in self.documents:
+            chunk_pages = doc.metadata.get("chunk_pages", [])
             for i, chunk in enumerate(doc.chunks):
                 chunk_id = f"{doc.id}_{i}"
                 doc_ids.append(chunk_id)
+                
+                # Get page number for this chunk
+                page_number = chunk_pages[i] if i < len(chunk_pages) else None
+                
+                # Filter metadata to only include simple types that ChromaDB accepts
+                # ChromaDB only accepts: str, int, float, bool, None (not lists, dicts, etc.)
+                filtered_metadata = {}
+                for key, value in doc.metadata.items():
+                    # Skip complex types (lists, dicts) - ChromaDB doesn't support them
+                    if key == "chunk_pages":  # Skip the list itself
+                        continue
+                    if isinstance(value, (str, int, float, bool)) or value is None:
+                        filtered_metadata[key] = value
                 
                 # Create LangChain Document with metadata
                 langchain_docs.append(
@@ -84,7 +98,8 @@ class HybridSearchEngine:
                         metadata={
                             "doc_id": doc.id,
                             "chunk_idx": i,
-                            **doc.metadata,
+                            "page_number": page_number,  # int or None - ChromaDB compatible
+                            **filtered_metadata,
                         }
                     )
                 )
@@ -183,21 +198,34 @@ class HybridSearchEngine:
             for idx in top_indices:
                 if scores[idx] > 0:
                     chunk_info = self.chunk_map[idx]
-                    doc_metadata = next(
+                    doc = next(
                         (
-                            d.metadata
+                            d
                             for d in self.documents
                             if d.id == chunk_info["doc_id"]
                         ),
-                        {},
+                        None,
                     )
+                    doc_metadata = doc.metadata if doc else {}
+                    
+                    # Get page number for this chunk
+                    chunk_pages = doc_metadata.get("chunk_pages", [])
+                    page_number = (
+                        chunk_pages[chunk_info["chunk_idx"]]
+                        if chunk_info["chunk_idx"] < len(chunk_pages)
+                        else None
+                    )
+                    
+                    # Create metadata with page_number
+                    chunk_metadata = {**doc_metadata, "page_number": page_number}
+                    
                     results.append(
                         {
                             "score": float(scores[idx]),
                             "content": self.corpus[idx],
                             "doc_id": chunk_info["doc_id"],
                             "chunk_idx": chunk_info["chunk_idx"],
-                            "metadata": doc_metadata,
+                            "metadata": chunk_metadata,
                             "search_type": "keyword",
                         }
                     )

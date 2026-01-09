@@ -138,9 +138,30 @@ def build_router_graph(
         # Use structured output for classification
         structured_llm = router_llm.with_structured_output(ClassificationResult)
         
+        # Build conversation context if available
+        conversation_history = state.get("conversation_history", [])
+        conversation_context = ""
+        if conversation_history:
+            # Format conversation history for context
+            recent_messages = conversation_history[-4:]  # Last 4 messages (2 exchanges)
+            context_parts = []
+            for msg in recent_messages:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                if role == "user":
+                    context_parts.append(f"User: {content}")
+                elif role == "assistant":
+                    context_parts.append(f"Assistant: {content}")
+            conversation_context = "\n".join(context_parts)
+        
         system_prompt = """You are a query classifier for a RAG (Retrieval-Augmented Generation) system with web search capabilities.
 
 IMPORTANT: Prioritize web_search for ANY query that requires CURRENT, REAL-TIME, or RECENT information.
+
+IMPORTANT: If this is a follow-up question in a conversation, consider the conversation context when classifying.
+- If the previous conversation was about documents, follow-up questions are likely also about documents (RAG route)
+- If the previous conversation was about general topics, follow-up questions are likely general (general route)
+- Only route to web_search if the query explicitly needs current/real-time information
 
 Analyze the user's query and determine if it requires:
 1. **RAG route**: Questions about specific documents, content, or information that was uploaded.
@@ -182,9 +203,19 @@ Analyze the user's query and determine if it requires:
 Return your classification with confidence and reasoning. When in doubt between web_search and general, choose web_search if the query could benefit from current information."""
 
         try:
+            # Build user message with conversation context if available
+            user_message = state["query"]
+            if conversation_context:
+                user_message = f"""Previous conversation:
+{conversation_context}
+
+Current question: {state["query"]}
+
+Classify the current question considering the conversation context."""
+            
             result = structured_llm.invoke([
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": state["query"]}
+                {"role": "user", "content": user_message}
             ])
             
             route = result.route
@@ -247,16 +278,39 @@ Return your classification with confidence and reasoning. When in doubt between 
     def handle_general_query(state: RouterState) -> dict:
         """Handle general conversational queries without RAG."""
         try:
-            response = general_llm.invoke([
-                {
-                    "role": "system",
-                    "content": """You are a helpful AI assistant. Answer questions conversationally 
-                    and provide accurate, helpful information. If the question is about uploaded 
-                    documents or specific content, politely suggest that the user rephrase their 
-                    question to reference the documents explicitly.""",
-                },
-                {"role": "user", "content": state["query"]}
-            ])
+            images = state.get("images", [])
+            has_images = len(images) > 0
+            
+            if has_images:
+                # Use vision API for images
+                from langchain_core.messages import HumanMessage, SystemMessage
+                from app.agents.answer_generator import parse_image_data
+                
+                image_contents = [parse_image_data(img) for img in images]
+                
+                messages = [
+                    SystemMessage(content="""You are a helpful AI assistant. Answer questions conversationally 
+                    and provide accurate, helpful information. Analyze any images provided and answer questions about them.
+                    If the question is about uploaded documents or specific content, politely suggest that the user 
+                    rephrase their question to reference the documents explicitly."""),
+                    HumanMessage(content=[
+                        {"type": "text", "text": state["query"]},
+                        *image_contents
+                    ])
+                ]
+                
+                response = general_llm.invoke(messages)
+            else:
+                response = general_llm.invoke([
+                    {
+                        "role": "system",
+                        "content": """You are a helpful AI assistant. Answer questions conversationally 
+                        and provide accurate, helpful information. If the question is about uploaded 
+                        documents or specific content, politely suggest that the user rephrase their 
+                        question to reference the documents explicitly.""",
+                    },
+                    {"role": "user", "content": state["query"]}
+                ])
             
             answer = response.content if hasattr(response, 'content') else str(response)
             
@@ -293,13 +347,17 @@ Return your classification with confidence and reasoning. When in doubt between 
         try:
             from app.graph.state import RAGState
             
-            # Create RAG state
+            # Create RAG state with new fields
             rag_state: RAGState = {
                 "query": state["query"],
+                "conversation_history": state.get("conversation_history", []),
+                "images": state.get("images", []),
+                "expanded_queries": [],
                 "vector_results": [],
                 "keyword_results": [],
                 "hybrid_results": [],
                 "reranked_results": [],
+                "compressed_context": [],
                 "final_answer": "",
                 "quality_score": 0.0,
                 "reasoning": "",
@@ -315,7 +373,8 @@ Return your classification with confidence and reasoning. When in doubt between 
             
             # Format sources with filenames
             # Use all reranked results (up to TOP_K_RERANK) for better context
-            sources = []
+            # First pass: collect all results with scores
+            all_results_with_scores = []
             for d in result.get("reranked_results", [])[:settings.TOP_K_RERANK]:
                 doc_id = d.get("doc_id", "")
                 doc = docs_store.get(doc_id) if doc_id in docs_store else None
@@ -336,13 +395,93 @@ Return your classification with confidence and reasoning. When in doubt between 
                 else:
                     score = 0.0
                 
-                sources.append({
+                all_results_with_scores.append({
                     "doc_id": doc_id,
-                    "chunk_idx": d.get("chunk_idx", 0),
+                    "doc": doc,
                     "filename": filename,
-                    "score": float(score),
-                    "content": d.get("content", "")[:200] + "..." if len(d.get("content", "")) > 200 else d.get("content", ""),
+                    "score": score,
+                    "data": d,
                 })
+            
+            # Adaptive thresholding: if all scores are below threshold, use relative ranking
+            # This handles cases where Cohere reranker scores are low but still relevant
+            max_score = max((r["score"] for r in all_results_with_scores), default=0.0)
+            
+            # If max score is below threshold, use adaptive threshold
+            # Keep top results even if absolute scores are low (common with Cohere reranker)
+            if max_score < settings.MIN_RELEVANCE_SCORE and max_score > 0:
+                # Use adaptive threshold: 50% of max score, but at least 0.005
+                # This ensures we keep the most relevant results even with low absolute scores
+                adaptive_threshold = max(max_score * 0.5, 0.005)
+                logger.info(
+                    "using_adaptive_threshold",
+                    max_score=max_score,
+                    original_threshold=settings.MIN_RELEVANCE_SCORE,
+                    adaptive_threshold=adaptive_threshold,
+                )
+                effective_threshold = adaptive_threshold
+            elif max_score == 0:
+                # If all scores are 0, keep all results (no filtering)
+                effective_threshold = -1  # Negative threshold means accept all
+                logger.info("all_scores_zero_keeping_all_results")
+            else:
+                effective_threshold = settings.MIN_RELEVANCE_SCORE
+            
+            # Filter results using effective threshold
+            sources = []
+            for r in all_results_with_scores:
+                # Negative threshold means accept all (when all scores are 0)
+                if effective_threshold >= 0 and r["score"] < effective_threshold:
+                    logger.debug(
+                        "filtering_low_score_result",
+                        score=r["score"],
+                        doc_id=r["doc_id"],
+                        threshold=effective_threshold,
+                    )
+                    continue
+                
+                # Get page number from metadata
+                d = r["data"]
+                chunk_metadata = d.get("metadata", {})
+                page_number = chunk_metadata.get("page_number") or d.get("page_number")
+                
+                # Normalize content text to fix spacing issues
+                from app.utils.document_loader import normalize_text
+                content = d.get("content", "")
+                content = normalize_text(content)
+                content_preview = content[:200] + "..." if len(content) > 200 else content
+                
+                sources.append({
+                    "doc_id": r["doc_id"],
+                    "chunk_idx": d.get("chunk_idx", 0),
+                    "page_number": page_number,
+                    "filename": r["filename"],
+                    "score": float(r["score"]),
+                    "content": content_preview,
+                })
+            
+            # If no sources passed the relevance threshold, provide helpful message
+            if not sources and result.get("reranked_results"):
+                max_score = max(
+                    (
+                        d.get("rerank_score") or d.get("fusion_score") or d.get("score") or 0.0
+                        for d in result.get("reranked_results", [])
+                    ),
+                    default=0.0,
+                )
+                logger.warning(
+                    "no_sources_passed_threshold",
+                    query=state["query"][:50],
+                    max_score=max_score,
+                    threshold=settings.MIN_RELEVANCE_SCORE,
+                )
+                return {
+                    "answer": f"I couldn't find relevant information in the uploaded documents to answer your question. The documents appear to be about a course syllabus, but your question asks about '{state['query']}'. Please try asking about topics covered in the course syllabus, or upload documents that contain information about your question.",
+                    "quality_score": 0.0,
+                    "reasoning": f"No sources met the minimum relevance threshold of {settings.MIN_RELEVANCE_SCORE}. Highest score was {max_score:.4f}.",
+                    "sources": [],
+                    "error": None,
+                }
             
             logger.info("rag_query_processed", query=state["query"][:50], sources_count=len(sources))
             
@@ -406,13 +545,50 @@ Return your classification with confidence and reasoning. When in doubt between 
 
             context_text = "\n\n".join(context_parts)
 
-            # Generate answer using LLM with web context
-            response = general_llm.invoke(
-                [
-                    {
-                        "role": "system",
-                        "content": """You are a helpful AI assistant. Answer questions using the provided 
-                        web search results. Format your response using Markdown for better readability.
+            # Check if images are present
+            images = state.get("images", [])
+            has_images = len(images) > 0
+            
+            if has_images:
+                # Use vision API for images with web search context
+                from langchain_core.messages import HumanMessage, SystemMessage
+                from app.agents.answer_generator import parse_image_data
+                
+                image_contents = [parse_image_data(img) for img in images]
+                
+                messages = [
+                    SystemMessage(content="""You are a helpful AI assistant. Answer questions using the provided 
+                    web search results and any images provided. Format your response using Markdown for better readability.
+
+IMPORTANT FORMATTING RULES:
+1. Use **bold** for key terms, headings, and important information
+2. Use markdown links: [link text](URL) for all URLs from sources
+3. Use numbered lists (1., 2., 3.) for multiple points or features
+4. Use bullet points (- or *) for lists
+5. Use ## for section headings when appropriate
+6. Cite sources using [1], [2], etc. when referencing specific results, and include the actual link: [Source Name](URL)
+7. Make links clickable and visible - always format URLs as [descriptive text](URL)
+8. Structure your response clearly with proper headings and sections
+9. Use proper spacing and line breaks for readability
+
+Be accurate and provide up-to-date information based on the search results.
+If the search results don't fully answer the question, acknowledge what information
+is available and what might be missing."""),
+                    HumanMessage(content=[
+                        {"type": "text", "text": f"Context from web search:\n{context_text}\n\nQuestion: {state['query']}\n\nProvide a well-formatted answer using Markdown. Include clickable links using [link text](URL) format for all sources referenced. Use headings, lists, and bold text to make the response clear and readable."},
+                        *image_contents
+                    ])
+                ]
+                
+                response = general_llm.invoke(messages)
+            else:
+                # Generate answer using LLM with web context (no images)
+                response = general_llm.invoke(
+                    [
+                        {
+                            "role": "system",
+                            "content": """You are a helpful AI assistant. Answer questions using the provided 
+                            web search results. Format your response using Markdown for better readability.
 
 IMPORTANT FORMATTING RULES:
 1. Use **bold** for key terms, headings, and important information
@@ -428,13 +604,13 @@ IMPORTANT FORMATTING RULES:
 Be accurate and provide up-to-date information based on the search results.
 If the search results don't fully answer the question, acknowledge what information
 is available and what might be missing.""",
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Context from web search:\n{context_text}\n\nQuestion: {state['query']}\n\nProvide a well-formatted answer using Markdown. Include clickable links using [link text](URL) format for all sources referenced. Use headings, lists, and bold text to make the response clear and readable.",
-                    },
-                ]
-            )
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Context from web search:\n{context_text}\n\nQuestion: {state['query']}\n\nProvide a well-formatted answer using Markdown. Include clickable links using [link text](URL) format for all sources referenced. Use headings, lists, and bold text to make the response clear and readable.",
+                        },
+                    ]
+                )
 
             answer = (
                 response.content if hasattr(response, "content") else str(response)

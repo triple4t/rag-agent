@@ -19,6 +19,7 @@ export interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  images?: string[]; // Array of base64-encoded images or data URLs
   sources?: Source[];
   qualityScore?: number;
   latency?: number;
@@ -34,6 +35,7 @@ export interface Source {
   doc_id: string;
   filename?: string;
   chunk_idx: number;
+  page_number?: number | null;
   content: string;
   score: number;
 }

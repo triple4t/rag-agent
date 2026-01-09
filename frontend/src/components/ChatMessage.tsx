@@ -21,6 +21,36 @@ const ChatMessage = ({ message }: ChatMessageProps) => {
       <div className="max-w-3xl mx-auto px-4 flex gap-4">
         <Avatar type={message.role} />
         <div className="flex-1 min-w-0">
+          {/* Display images if present */}
+          {message.images && message.images.length > 0 && (
+            <div className="mb-3">
+              <div className="flex flex-wrap gap-3">
+                {message.images.map((image, index) => (
+                  <div key={index} className="relative group">
+                    <img
+                      src={image}
+                      alt={`Uploaded image ${index + 1}`}
+                      className="max-w-xs max-h-64 rounded-lg border-2 border-border object-contain bg-accent/50 hover:border-primary/50 transition-colors cursor-pointer"
+                      onClick={() => {
+                        // Open image in new tab on click
+                        const newWindow = window.open();
+                        if (newWindow) {
+                          newWindow.document.write(`<img src="${image}" style="max-width: 100%; height: auto;" />`);
+                        }
+                      }}
+                    />
+                    <div className="absolute bottom-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                      Click to view full size
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                {message.images.length} image{message.images.length > 1 ? 's' : ''} attached
+              </p>
+            </div>
+          )}
+          
           <div className="text-foreground break-words leading-relaxed prose prose-invert prose-sm max-w-none dark:prose-invert">
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
@@ -129,7 +159,11 @@ const ChatMessage = ({ message }: ChatMessageProps) => {
                         </div>
                         {!isUrl && (
                           <div className="text-xs text-muted-foreground mb-1">
-                            Chunk {source.chunk_idx + 1}
+                            {source.page_number ? (
+                              <>Page {source.page_number} • Chunk {source.chunk_idx + 1}</>
+                            ) : (
+                              <>Chunk {source.chunk_idx + 1}</>
+                            )}
                           </div>
                         )}
                         <div className="text-muted-foreground line-clamp-3">
